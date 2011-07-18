@@ -23,8 +23,9 @@
 
 (defun toggle-name (name)
   (if (find name <names>)
-      (remove name <names>)
+      (delete name <names>)
       (push name <names>)))
+(trace find remove)
 
 (defun get-list-of-files ()
   (list "/home/nick/lisp-code/cl-picrename/examples/pic1.jpg"
@@ -58,7 +59,7 @@
 (defun make-description ()
   (let* ((desc (prompt-read "Description or #0-#9 for previous descriptions"))
 	(num (handler-case (parse-integer desc)
-	       ('SIMPLE-ERROR nil))))
+	       (error () nil))))
     (cond ((and num (max (min num 9) 0)) (revert-description num))
 	  (num (make-description))
 	  (t (push desc <description>)))
@@ -74,7 +75,8 @@
   (let ((in-mapped (gethash input-char *inputmap*)))
     (case input-char
       (#\l (setf *list-of-files* (get-list-of-files)))
-      (#\Newline (rename (car *list-of-files*) (compile-name)))
+      (#\Newline (progn (rename (pop *list-of-files*) (compile-name))
+			(setf <names> nil)))
       (#\; (make-description))
       (otherwise
        (cond
@@ -92,9 +94,12 @@
 ;;	  (in-mapped (toggle-name in-mapped))
 ;;	  (t (make-name input-char)))))
 
+(format t "Commands~%l - Load new files~%; - Make a new description~%<NewLine> - Execute renaming of file")
+(format t "To add names, initially type the letter which will provide the hotkey for the person you want to add.~%When prompted, type the name and hit enter.  Subsequent use of that letter hotkey will result in the toggling of that person's name.~%")
+(princ "Press Escape to exit the program")
 (format t "Input: ")
 (loop for ch = (read-char)
       until (eq ch #\Escape)
       do (input-handler ch)
          (fresh-line)
-         (format t "~a~%Input: " (compile-name)))
+         (format t "List of files to rename~%*current*~{~A~%~}~a~%Input: " *list-of-files* (compile-name)))
