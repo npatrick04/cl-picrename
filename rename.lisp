@@ -12,18 +12,20 @@
 ;;(asdf:load-system "fsm")
 (load "../fsm/fsm.lisp")
 (asdf:load-system "utilities")
+(asdf:load-system :cl-fad)
+(ql:quickload "lisp-magick")
 
 (defvar *config-file* ".renamerrc")
 (defvar *list-of-files* '())
 (defvar *inputmap* (make-hash-table :test #'eq))
 (defvar *name-pattern* "<names> <description> <#> <date>")
-(defvar *title-format* "~{~a~#[~; and ~:;, ~]~} ~a num date~%")
 (defvar *name-in-progress* "")
 (defvar <names> nil)
 (defvar <description> (list))
+(defvar *description-in-progress* "")
 (defvar <date> nil)
 (defvar *current-word* "")
-(defvar *state* 'idle) ;;; idle, new, nextfile, modified, set-name, set-description, enter-description, enter-name
+(defvar *the-state* "")
 (defparameter *prompt* "prompt>")
 (defparameter out *standard-output*)
 
