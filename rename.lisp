@@ -38,29 +38,41 @@
 (defclass description (word)
   ())
 
-(defun rename (file1 file2)
-  (format out "Check that file 1 exists and 2 doesn't~%Rename ~a to ~a~%" file1 file2))
+(defun rename (file1 fname2)
+  "Rename file1 which includes the path, to the filename of fname2.
+fname2 will be located in the same directory as file1"
+  (let* ((last/ (1+ (position #\/ file1 :from-end t)))
+         (path (subseq file1 0 last/))
+         (fname1 (subseq file1 last/))
+         (file2 (concatenate 'string path fname2)))
+    (if (cl-fad:file-exists-p file1)
+        (if (cl-fad:file-exists-p file2)
+            (error 'new-file-already-exists)
+            (progn (format out "file 1 exists and 2 doesn't~%Renaming ~a to ~a~%" file1 file2)
+                   (rename-file file1 file2)))
+        (error 'original-file-doesnt-exist))))
 
 (defun toggle-name (name)
-  (if (find name <names>)
-      (delete name <names>)
+  (if (member name <names> :test #'equal)
+      (setf <names> (delete name <names> :test #'equal))
       (push name <names>)))
 
 (defun get-list-of-files ()
-  (list "/home/nick/lisp/cl-picrename/examples/2012-02-01 13.17.41.jpg"
-	"/home/nick/lisp/cl-picrename/examples/2012-02-01 13.18.09.jpg"
-	"/home/nick/lisp/cl-picrename/examples/2012-02-03 15.33.56.jpg"
-	"/home/nick/lisp/cl-picrename/examples/2012-02-03 15.34.08.jpg"))
+  (mapcar #'sb-ext:native-namestring (cl-fad:list-directory "/home/nick/lisp/cl-picrename/examples")))
 
 (defun words-equalp (c1 c2)
   (eq (the-char c1) (the-char c2)))
 
+(defvar *names-format* "~{~a~#[~; and ~:; ~]~}")
+(defvar *title-format-desc* "~A ~a num ~A")
+(defvar *title-format-no-desc* "~A num ~A")
 (defun compile-name ()
-  (format nil *title-format*
-	  (mapcar (lambda (name)
-		    (word name))
-		  <names>)
-	  (car <description>)))
+  (let ((names (format nil *names-format*
+		       <names>)))
+    (cond
+      (*description-in-progress* (format nil *title-format-desc* names *description-in-progress* <date>))
+      (<description> (format nil *title-format-desc* names (car <description>) <date>))
+      (t (format nil *title-format-no-desc* names <date>)))))
 
 (defun revert-description (num)
   (let ((desc (nth num <description>)))
@@ -83,24 +95,47 @@
     (toggle-name name-object)))
 
 (fsm:deffsm input-fsm ()
-  ((the-key :accessor the-key)))
+  ((the-key :accessor the-key)
+   (back :accessor back)))
+
+(defun set-initial-state ()
+  (setf *prompt* "Enter Character for Name: "
+        <names> nil
+	*name-in-work* "")
+  :initial)
 
 (fsm:defstate input-fsm :initial (fsm c)
-  (let ((in-mapped (gethash c *inputmap*)))
-    (cond
-      (in-mapped (progn (toggle-name in-mapped)
-			:named))
-      (t (progn (setf (the-key fsm) c)
-		(format out "Character ~A, beginning naming~%" c)
-		(setf *prompt* (format nil "Name (~A): " c))
-		:naming)))))
+  (setf (the-key fsm) nil)
+  (if (char= c #\;)
+      :describe
+      (let ((in-mapped (gethash c *inputmap*)))
+	(cond
+	  (in-mapped (progn (toggle-name in-mapped)
+			    :named))
+          (#\' (progn (update-prompt "Select an entry to modify: ")
+                      (setf (back fsm) :initial)
+                      :modify))
+	  (t (progn (setf (the-key fsm) c)
+		    (format out "Character ~A, beginning naming~%" c)
+		    (setf *prompt* (format nil "Name (~A): " c))
+		    :naming))))))
 
 (fsm:defstate input-fsm :named (fsm c)
   (case c
-    (#\Newline ; Finish the name of the file
+    (#\Escape (set-initial-state))
+    (#\Return ; Finish the name of the file
      (progn (rename (pop *list-of-files*) (compile-name))
-	    (setf <names> nil)
-	    :initial))
+            (if *list-of-files*
+                (progn (format out "~%Current list of files: ~%~{  ~A~%~}" *list-of-files*)
+                       (load-from-list *the-window*)
+                       (set-initial-state))
+                (progn (glut:destroy-current-window)
+                       :initial))))
+    (#\' (progn (update-prompt "Select an entry to modify: ")
+                (setf (back fsm) :named)
+                  :modify))
+    (#\; (progn (setf *prompt* "Enter Description")
+                :describe))
     (otherwise
      (let ((in-mapped (gethash c *inputmap*)))
        (cond
@@ -110,25 +145,66 @@
 			   (if (or <names>
 				   <description>)
 			       :named
-			       :initial)))
+                               (set-initial-state))))
 	 (t (progn (setf (the-key fsm) c)
 		   (format out "Character ~A, beginning naming~%" c)
 		   (setf *prompt* (format nil "Name (~A): " c))
 		   :naming)))))))
+
+(defmacro backspace (string)
+  `(setf ,string
+         (coerce (butlast (coerce ,string 'list))
+                 'string)))
+
+(defun update-prompt (new-prompt)
+  (bordeaux-threads:acquire-lock prompt-lock)
+  (setf *prompt* new-prompt)
+  (bordeaux-threads:release-lock prompt-lock))
     
 (fsm:defstate input-fsm :naming (fsm c)
   (case c
-    (#\Newline (progn (rename (pop *list-of-files*) (compile-name))
-		      (format out "~%Character ~A set to ~A" (the-key fsm) *name-in-progress*)
-		      (setf <names> nil)))
-    (t (progn (concatenate 'string *name-in-progress* (list c))
+    (#\Escape (progn (setf *name-in-progress* "")
+		     (update-prompt "Name: ")
+		     (if <names>
+			 :named
+			 (set-initial-state))))
+    (#\Return (progn (format out "~%Character ~A set to ~A~%" (the-key fsm) *name-in-progress*)
+                     (push *name-in-progress* <names>)
+                     (setf (gethash (the-key fsm) *inputmap*) *name-in-progress*)
+                     (setf *name-in-progress* "")
+                     (update-prompt "Name: ")
+                     :named))
+    (#\Backspace (progn (backspace *name-in-progress*)
+                          (unless (string= "" *name-in-progress*)
+                              (backspace *prompt*))
+                          :naming))
+    (t (progn (setf *name-in-progress*
+		    (concatenate 'string *name-in-progress* (list c)))
 	      (format out "~A" c)
-	      (bordeaux-threads:acquire-lock prompt-lock)
-	      (concatenate 'string *prompt* (list c))
-	      (bordeaux-threads:release-lock prompt-lock)
+              (update-prompt (concatenate 'string *prompt* (list c)))
 	      :naming))))
 
+(fsm:defstate input-fsm :modify (fsm c)
+  (case c
+    (#\Escape (back fsm))))
+
+(fsm:defstate input-fsm :describe (fsm c)
+  (case c
+    (#\Escape (progn (setf <description> nil)
+		     (if <names>
+			 :named
+                         (set-initial-state))))
+    (#\Return (progn (push *description-in-progress* <description>)
+		     (setf *description-in-progress* nil)
+		     (if <names>
+			 :named
+                         (set-initial-state))))
+    (t (progn (setf *description-in-progress*
+		    (concatenate 'string *description-in-progress* (list c)))
+	      :describe))))
+
 (defparameter *the-fsm* (make-instance 'input-fsm))
+(setf *the-state* "INITIAL")
 
 ;; (format t "Commands~%l - Load new files~%; - Make a new description~%<NewLine> - Execute renaming of file")
 ;; (format t "To add names, initially type the letter which will provide the hotkey for the person you want to add.~%When prompted, type the name and hit enter.  Subsequent use of that letter hotkey will result in the toggling of that person's name.~%")
@@ -208,9 +284,14 @@ Print with glut to an x, y with a glut:font"
 
   ;; Text overlay
   (bordeaux-threads:acquire-lock prompt-lock)
+  (glut-print 10 30 glut:+bitmap-9-by-15+
+	      (format nil "~A" (fsm:state *the-fsm*)) 90 90 90 1)
   (glut-print 10 10 glut:+bitmap-9-by-15+
-	      *prompt* 0 0 0 1)
+	      *prompt* 90 90 90 1)
   (bordeaux-threads:release-lock prompt-lock)
+  (if (not (eq (fsm:state *the-fsm*) :initial))
+      (glut-print 10 50 glut:+bitmap-9-by-15+
+		  (compile-name) 90 90 90 1))
   ;; swap the buffer onto the screen  
   (glut:swap-buffers))
 
@@ -232,6 +313,19 @@ Print with glut to an x, y with a glut:font"
   (gl:matrix-mode :modelview)     ; select the modelview matrix
   (gl:load-identity))              ; reset the matrix
 
+(defun load-from-list (win)
+  (setf (texture-id win)
+	(il:with-init
+	  (ilut:renderer :opengl)
+	  (ilut:gl-load-image (car *list-of-files*)))
+        <date> (let ((wand (lisp-magick:new-magick-wand)))
+                 (lisp-magick:magick-read-image wand (car *list-of-files*))
+                 (let* ((date-time (lisp-magick:magick-get-image-property wand "date:modify"))
+                        (date (subseq date-time 0 (position #\T date-time))))
+                   (lisp-magick:clear-magick-wand wand)
+                   date))))
+                         
+
 (defmethod glut:keyboard ((win my-window) key xx yy)
   (declare (ignore xx yy))
   ;; Check for special keys
@@ -248,20 +342,15 @@ Print with glut to an x, y with a glut:font"
 			     :fullscreen (not full)))))
 	  ((#\l #\L) (progn (setf *list-of-files* (get-list-of-files))
 ;;			    (format out "Getting list of files~%~{~A~%~}" *list-of-files*)
-			    (setf (texture-id win)
-				  (il:with-init
-				    (ilut:renderer :opengl)
-				    (ilut:gl-load-image (car *list-of-files*)))))))
+			    (load-from-list win))))
 	  
 	;; No alt modifier, do normal stuff
 	(case key
-	  ((#\Escape) (glut:destroy-current-window))
+	  ((#\Escape) (if (eql (fsm:state *the-fsm*) :initial)
+			  (glut:destroy-current-window)
+			  (funcall *the-fsm* key)))
 	  (otherwise
 	   (funcall *the-fsm* key))))))
-	  ;; ((#\m #\M) (multiple-value-bind (shift ctrl alt) (glut:get-modifier-values)
-	  ;; 		 (format out "SHIFT ~A~%CTRL  ~A~%alt   ~A~%" shift ctrl alt)))
-	  ;; (#\Newline (progn (rename (pop *list-of-files*) (compile-name))
-	  ;; 		    (setf <names> nil)))
 	  ;; (#\; (make-description))
 	  ;; (otherwise
 	  ;;  (let ((in-mapped (gethash key *inputmap*)))
@@ -275,5 +364,7 @@ Print with glut to an x, y with a glut:font"
 ;;     ((#\q #\Q #\Escape) t)))
 
 (defun run-it ()
-  (setf *the-window* (make-instance 'my-window))
+  (setf *name-in-progress* ""
+	*prompt* "Enter Character for Name: "
+	*the-window* (make-instance 'my-window))
   (glut:display-window *the-window*))
