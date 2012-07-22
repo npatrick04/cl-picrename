@@ -94,63 +94,18 @@ fname2 will be located in the same directory as file1"
     (setf (gethash input-char *inputmap*) name-object)
     (toggle-name name-object)))
 
-(fsm:deffsm input-fsm ()
-  ((the-key :accessor the-key)
-   (back :accessor back)))
+(defmacro defrenamestate (fsm-type state &body body)
+  `(fsm:defstate ,fsm-type ,state (fsm c)
+     (case c
+       ,@body)))
+(defmacro mac (expr)
+  `(pprint (macroexpand-1 ',expr)))
 
 (defun set-initial-state ()
   (setf *prompt* "Enter Character for Name: "
         <names> nil
 	*name-in-work* "")
   :initial)
-
-(fsm:defstate input-fsm :initial (fsm c)
-  (setf (the-key fsm) nil)
-  (if (char= c #\;)
-      :describe
-      (let ((in-mapped (gethash c *inputmap*)))
-	(cond
-	  (in-mapped (progn (toggle-name in-mapped)
-			    :named))
-          (#\' (progn (update-prompt "Select an entry to modify: ")
-                      (setf (back fsm) :initial)
-                      :modify))
-	  (t (progn (setf (the-key fsm) c)
-		    (format out "Character ~A, beginning naming~%" c)
-		    (setf *prompt* (format nil "Name (~A): " c))
-		    :naming))))))
-
-(fsm:defstate input-fsm :named (fsm c)
-  (case c
-    (#\Escape (set-initial-state))
-    (#\Return ; Finish the name of the file
-     (progn (rename (pop *list-of-files*) (compile-name))
-            (if *list-of-files*
-                (progn (format out "~%Current list of files: ~%~{  ~A~%~}" *list-of-files*)
-                       (load-from-list *the-window*)
-                       (set-initial-state))
-                (progn (glut:destroy-current-window)
-                       :initial))))
-    (#\' (progn (update-prompt "Select an entry to modify: ")
-                (setf (back fsm) :named)
-                  :modify))
-    (#\; (progn (setf *prompt* "Enter Description")
-                :describe))
-    (otherwise
-     (let ((in-mapped (gethash c *inputmap*)))
-       (cond
-	 (in-mapped (progn (toggle-name in-mapped)
-			   (format out "Character ~A in map~%" c)
-			   ;; Have to check if we've turned off a name
-			   (if (or <names>
-				   <description>)
-			       :named
-                               (set-initial-state))))
-	 (t (progn (setf (the-key fsm) c)
-		   (format out "Character ~A, beginning naming~%" c)
-		   (setf *prompt* (format nil "Name (~A): " c))
-		   :naming)))))))
-
 (defmacro backspace (string)
   `(setf ,string
          (coerce (butlast (coerce ,string 'list))
@@ -161,47 +116,95 @@ fname2 will be located in the same directory as file1"
   (setf *prompt* new-prompt)
   (bordeaux-threads:release-lock prompt-lock))
     
-(fsm:defstate input-fsm :naming (fsm c)
-  (case c
-    (#\Escape (progn (setf *name-in-progress* "")
-		     (update-prompt "Name: ")
-		     (if <names>
-			 :named
-			 (set-initial-state))))
-    (#\Return (progn (format out "~%Character ~A set to ~A~%" (the-key fsm) *name-in-progress*)
-                     (push *name-in-progress* <names>)
-                     (setf (gethash (the-key fsm) *inputmap*) *name-in-progress*)
-                     (setf *name-in-progress* "")
-                     (update-prompt "Name: ")
-                     :named))
-    (#\Backspace (progn (backspace *name-in-progress*)
-                          (unless (string= "" *name-in-progress*)
-                              (backspace *prompt*))
-                          :naming))
-    (t (progn (setf *name-in-progress*
-		    (concatenate 'string *name-in-progress* (list c)))
-	      (format out "~A" c)
-              (update-prompt (concatenate 'string *prompt* (list c)))
-	      :naming))))
+(fsm:deffsm input-fsm ()
+  ((the-key :accessor the-key)
+   (back :accessor back)))
 
-(fsm:defstate input-fsm :modify (fsm c)
+(fsm:defstate input-fsm :initial (fsm c)
+  (setf (the-key fsm) nil)
   (case c
-    (#\Escape (back fsm))))
+    (#\; :describe)
+    (#\' (update-prompt "Select an entry to modify: ")
+         (setf (back fsm) :initial)
+         :modify)
+    (otherwise
+     (alexandria:if-let (in-mapped (gethash c *inputmap*))
+       (progn (toggle-name in-mapped)
+              :named)
+       (progn (setf (the-key fsm) c)
+              (format out "Character ~A, beginning naming~%" c)
+              (setf *prompt* (format nil "Name (~A): " c))
+              :naming)))))
 
-(fsm:defstate input-fsm :describe (fsm c)
-  (case c
-    (#\Escape (progn (setf <description> nil)
-		     (if <names>
-			 :named
-                         (set-initial-state))))
-    (#\Return (progn (push *description-in-progress* <description>)
-		     (setf *description-in-progress* nil)
-		     (if <names>
-			 :named
-                         (set-initial-state))))
-    (t (progn (setf *description-in-progress*
-		    (concatenate 'string *description-in-progress* (list c)))
-	      :describe))))
+(defrenamestate input-fsm :named
+  (#\Escape (set-initial-state))
+  (#\Return ; Finish the name of the file
+   (rename (pop *list-of-files*) (compile-name))
+   (cond
+     (*list-of-files*
+      (format out "~%Current list of files: ~%~{  ~A~%~}" *list-of-files*)
+      (load-from-list *the-window*)
+      (set-initial-state))
+     (t (glut:destroy-current-window)
+        :initial))
+  (#\' (update-prompt "Select an entry to modify: ")
+       (setf (back fsm) :named)
+       :modify)
+  (#\; (setf *prompt* "Enter Description")
+       :describe)
+  (otherwise
+   (let ((in-mapped (gethash c *inputmap*)))
+     (cond
+       (in-mapped (toggle-name in-mapped)
+                  (format out "Character ~A in map~%" c)
+                  ;; Have to check if we've turned off a name
+                  (if (or <names>
+                          <description>)
+                      :named
+                      (set-initial-state)))
+       (t (setf (the-key fsm) c)
+          (format out "Character ~A, beginning naming~%" c)
+          (setf *prompt* (format nil "Name (~A): " c))
+          :naming)))))
+
+(defrenamestate input-fsm :naming
+  (#\Escape (setf *name-in-progress* "")
+            (update-prompt "Name: ")
+            (if <names>
+                :named
+                (set-initial-state)))
+  (#\Return (format out "~%Character ~A set to ~A~%" (the-key fsm) *name-in-progress*)
+            (push *name-in-progress* <names>)
+            (setf (gethash (the-key fsm) *inputmap*) *name-in-progress*)
+            (setf *name-in-progress* "")
+            (update-prompt "Name: ")
+            :named)
+  (#\Backspace (backspace *name-in-progress*)
+               (unless (string= "" *name-in-progress*)
+                 (backspace *prompt*))
+               :naming)
+  (t (setf *name-in-progress*
+           (concatenate 'string *name-in-progress* (list c)))
+     (format out "~A" c)
+     (update-prompt (concatenate 'string *prompt* (list c)))
+     :naming))
+
+(defrenamestate input-fsm :modify
+  (#\Escape (back fsm)))
+
+(defrenamestate input-fsm :describe
+  (#\Escape (setf <description> nil)
+            (if <names>
+                :named
+                (set-initial-state)))
+  (#\Return (push *description-in-progress* <description>)
+            (setf *description-in-progress* nil)
+            (if <names>
+                :named
+                (set-initial-state)))
+  (t (setf *description-in-progress*
+           (concatenate 'string *description-in-progress* (list c)))
+     :describe))
 
 (defparameter *the-fsm* (make-instance 'input-fsm))
 (setf *the-state* "INITIAL")
