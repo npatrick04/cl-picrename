@@ -9,7 +9,6 @@
 (ql:quickload "bordeaux-threads")
 (ql:quickload "closer-mop")
 (ql:quickload "alexandria")
-;;(asdf:load-system "fsm")
 (load "../fsm/fsm.lisp")
 (asdf:load-system "utilities")
 (asdf:load-system :cl-fad)
@@ -101,11 +100,13 @@ fname2 will be located in the same directory as file1"
 (defmacro mac (expr)
   `(pprint (macroexpand-1 ',expr)))
 
-(defun set-initial-state ()
+(defun set-initial-state (the-fsm)
   (setf *prompt* "Enter Character for Name: "
         <names> nil
-	*name-in-work* "")
+	*name-in-work* ""
+        (the-key the-fsm) nil)
   :initial)
+
 (defmacro backspace (string)
   `(setf ,string
          (coerce (butlast (coerce ,string 'list))
@@ -120,33 +121,31 @@ fname2 will be located in the same directory as file1"
   ((the-key :accessor the-key)
    (back :accessor back)))
 
-(fsm:defstate input-fsm :initial (fsm c)
-  (setf (the-key fsm) nil)
-  (case c
-    (#\; :describe)
-    (#\' (update-prompt "Select an entry to modify: ")
-         (setf (back fsm) :initial)
-         :modify)
-    (otherwise
-     (alexandria:if-let (in-mapped (gethash c *inputmap*))
-       (progn (toggle-name in-mapped)
-              :named)
-       (progn (setf (the-key fsm) c)
-              (format out "Character ~A, beginning naming~%" c)
-              (setf *prompt* (format nil "Name (~A): " c))
-              :naming)))))
+(defrenamestate input-fsm :initial
+  (#\; :describe)
+  (#\' (update-prompt "Select an entry to modify: ")
+       (setf (back fsm) :initial)
+       :modify)
+  (otherwise
+   (alexandria:if-let (in-mapped (gethash c *inputmap*))
+     (progn (toggle-name in-mapped)
+            :named)
+     (progn (setf (the-key fsm) c)
+            (format out "Character ~A, beginning naming~%" c)
+            (setf *prompt* (format nil "Name (~A): " c))
+            :naming))))
 
 (defrenamestate input-fsm :named
-  (#\Escape (set-initial-state))
+  (#\Escape (set-initial-state fsm))
   (#\Return ; Finish the name of the file
    (rename (pop *list-of-files*) (compile-name))
    (cond
      (*list-of-files*
       (format out "~%Current list of files: ~%~{  ~A~%~}" *list-of-files*)
       (load-from-list *the-window*)
-      (set-initial-state))
+      (set-initial-state fsm))
      (t (glut:destroy-current-window)
-        :initial))
+        :initial)))
   (#\' (update-prompt "Select an entry to modify: ")
        (setf (back fsm) :named)
        :modify)
@@ -161,18 +160,19 @@ fname2 will be located in the same directory as file1"
                   (if (or <names>
                           <description>)
                       :named
-                      (set-initial-state)))
+                      (set-initial-state fsm)))
        (t (setf (the-key fsm) c)
           (format out "Character ~A, beginning naming~%" c)
           (setf *prompt* (format nil "Name (~A): " c))
           :naming)))))
+
 
 (defrenamestate input-fsm :naming
   (#\Escape (setf *name-in-progress* "")
             (update-prompt "Name: ")
             (if <names>
                 :named
-                (set-initial-state)))
+                (set-initial-state fsm)))
   (#\Return (format out "~%Character ~A set to ~A~%" (the-key fsm) *name-in-progress*)
             (push *name-in-progress* <names>)
             (setf (gethash (the-key fsm) *inputmap*) *name-in-progress*)
@@ -196,12 +196,12 @@ fname2 will be located in the same directory as file1"
   (#\Escape (setf <description> nil)
             (if <names>
                 :named
-                (set-initial-state)))
+                (set-initial-state fsm)))
   (#\Return (push *description-in-progress* <description>)
             (setf *description-in-progress* nil)
             (if <names>
                 :named
-                (set-initial-state)))
+                (set-initial-state fsm)))
   (t (setf *description-in-progress*
            (concatenate 'string *description-in-progress* (list c)))
      :describe))
@@ -247,8 +247,7 @@ fname2 will be located in the same directory as file1"
           (il:with-init
 	    (ilut:renderer :opengl)
 	    (ilut:gl-load-image "/home/nick/2012-04-07-09.19.53.jpg"))))
-;;	    (ilut:gl-load-image "/home/nick/2012-04-07-09.19.53.jpg"))))
-;;	    (ilut:gl-load-image "/home/nick/lisp/cl-picrename/examples/pic1.jpg"))))
+
   (when (texture-id win)       ; enable texturing if we have one
     (gl:enable :texture-2d)))
 
@@ -304,17 +303,17 @@ Print with glut to an x, y with a glut:font"
   (gl:load-identity)              ; reset the matrix
 
   ;; set perspective based on window aspect ratio
-;;  (glu:perspective 45 (/ width (max height 1)) 1/10 100)
   (glu:ortho-2d 0 width 0 height)
 
-  ;; (format out "Win: Height: ~A, Width: ~A~%" (glut:height win) (glut:width win))
-  ;; (format out "New: Height: ~A, Width: ~A~%" height width)
+  (format out "Win: Height: ~A, Width: ~A~%" (glut:height win) (glut:width win))
+  (format out "New: Height: ~A, Width: ~A~%" height width)
 
   (setf (glut:height win) height
   	(glut:width win) width)
 
   (gl:matrix-mode :modelview)     ; select the modelview matrix
-  (gl:load-identity))              ; reset the matrix
+                                        ; reset the matrix
+  (gl:load-identity))
 
 (defun load-from-list (win)
   (setf (texture-id win)
@@ -334,7 +333,7 @@ Print with glut to an x, y with a glut:font"
   ;; Check for special keys
   (multiple-value-bind (shift ctrl alt) (glut:get-modifier-values)
     (declare (ignore shift ctrl))
-    (if alt
+    (if alt                             ;; TODO, figure out why ctrl didn't work
 	(case key
 	  ((#\f #\F)
 	   ;; save whether we're in fullscreen
@@ -344,7 +343,6 @@ Print with glut to an x, y with a glut:font"
 	      (make-instance 'my-window
 			     :fullscreen (not full)))))
 	  ((#\l #\L) (progn (setf *list-of-files* (get-list-of-files))
-;;			    (format out "Getting list of files~%~{~A~%~}" *list-of-files*)
 			    (load-from-list win))))
 	  
 	;; No alt modifier, do normal stuff
@@ -354,20 +352,10 @@ Print with glut to an x, y with a glut:font"
 			  (funcall *the-fsm* key)))
 	  (otherwise
 	   (funcall *the-fsm* key))))))
-	  ;; (#\; (make-description))
-	  ;; (otherwise
-	  ;;  (let ((in-mapped (gethash key *inputmap*)))
-	  ;;    (cond
-	  ;;      (in-mapped (toggle-name in-mapped))
-	  ;;      (t (make-name key)))))))))
-
-;; (defmethod glut:keyboard-up ((win my-window) key xx yy)
-;;   (declare (ignore xx yy))
-;;   (case key
-;;     ((#\q #\Q #\Escape) t)))
 
 (defun run-it ()
   (setf *name-in-progress* ""
 	*prompt* "Enter Character for Name: "
 	*the-window* (make-instance 'my-window))
+  (set-initial-state *the-fsm*)
   (glut:display-window *the-window*))
