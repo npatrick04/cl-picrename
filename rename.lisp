@@ -9,6 +9,7 @@
 (ql:quickload "bordeaux-threads")
 (ql:quickload "closer-mop")
 (ql:quickload "alexandria")
+(use-package :alexandria)
 (load "../fsm/fsm.lisp")
 (asdf:load-system "utilities")
 (asdf:load-system :cl-fad)
@@ -127,7 +128,7 @@ fname2 will be located in the same directory as file1"
        (setf (back fsm) :initial)
        :modify)
   (otherwise
-   (alexandria:if-let (in-mapped (gethash c *inputmap*))
+   (if-let (in-mapped (gethash c *inputmap*))
      (progn (toggle-name in-mapped)
             :named)
      (progn (setf (the-key fsm) c)
