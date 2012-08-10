@@ -360,3 +360,17 @@ Print with glut to an x, y with a glut:font"
 	*the-window* (make-instance 'my-window))
   (set-initial-state *the-fsm*)
   (glut:display-window *the-window*))
+
+(defun main ()
+  (format out "Command line arguments: ~%~{~A~%~}" sb-ext:*posix-argv*)
+  (setf *name-in-progress* ""
+	*prompt* "Enter Character for Name: "
+	*the-window* (make-instance 'my-window))
+  (set-initial-state *the-fsm*)
+  (glut:display-window *the-window*))
+
+;; Compile this file
+(unless (member :swank *features*)
+  (sb-ext:save-lisp-and-die "/home/nick/lisp/cl-picrename/picrename"
+                            :toplevel #'main
+                            :executable t))
