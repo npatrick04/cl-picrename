@@ -243,6 +243,9 @@ fname2 will be located in the same directory as file1"
   (when (fullscreen-p win)        ; check to see if fullscreen needed
     (glut:full-screen))           ; if so, then tell GLUT
 
+  (when *list-of-files*
+    (load-from-list win))
+  
   (unless (texture-id win)     ; load texture if needed
     (setf (texture-id win)
           (il:with-init
@@ -362,8 +365,10 @@ Print with glut to an x, y with a glut:font"
   (glut:display-window *the-window*))
 
 (defun main ()
-  (format out "Command line arguments: ~%~{~A~%~}" sb-ext:*posix-argv*)
-  (setf *name-in-progress* ""
+  (setf *list-of-files*
+        (mapcar #'(lambda (fn) (concatenate 'string (sb-posix:getcwd) "/" fn))
+                  (cdr sb-ext:*posix-argv*))
+        *name-in-progress* ""
 	*prompt* "Enter Character for Name: "
 	*the-window* (make-instance 'my-window))
   (set-initial-state *the-fsm*)
