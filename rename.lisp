@@ -402,12 +402,14 @@ Print with glut to an x, y with a glut:font"
   (glut:display-window *the-window*))
 
 (defun main ()
+  (glut:init (lisp-implementation-type))
   (setf *list-of-files*
         (mapcar #'(lambda (fn) (concatenate 'string (sb-posix:getcwd) "/" fn))
                   (cdr sb-ext:*posix-argv*))
         *name-in-progress* ""
 	*prompt* "Enter Character for Name: "
-	*the-window* (make-instance 'my-window))
+	*the-window* (make-instance 'my-window)
+        *inputmap* (read-input-map))
   (set-initial-state *the-fsm*)
   (glut:display-window *the-window*))
 
