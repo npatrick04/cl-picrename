@@ -39,12 +39,16 @@
 (defclass description (word)
   ())
 
+(defun get-path-of (file)
+  (if file
+      (subseq file 0 (1+ (position #\/ file :from-end t)))
+      "."))
+
 (defun rename (file1 fname2)
   "Rename file1 which includes the path, to the filename of fname2.
 fname2 will be located in the same directory as file1"
   (let* ((last/ (1+ (position #\/ file1 :from-end t)))
          (path (subseq file1 0 last/))
-         (fname1 (subseq file1 last/))
          (file2 (concatenate 'string path fname2)))
     (if (cl-fad:file-exists-p file1)
         (if (cl-fad:file-exists-p file2)
@@ -67,33 +71,25 @@ fname2 will be located in the same directory as file1"
 (defvar *names-format* "~{~a~#[~; and ~:; ~]~}")
 (defvar *title-format-desc* "~A ~a num ~A")
 (defvar *title-format-no-desc* "~A num ~A")
-(defun compile-name ()
-  (let ((names (format nil *names-format*
-		       <names>)))
-    (cond
-      (*description-in-progress* (format nil *title-format-desc* names *description-in-progress* <date>))
-      (<description> (format nil *title-format-desc* names (car <description>) <date>))
-      (t (format nil *title-format-no-desc* names <date>)))))
-
-(defun revert-description (num)
-  (let ((desc (nth num <description>)))
-    (cond (desc (push desc <description>))
-	  (t (push (car (last <description>)) <description>)))))
-
-(defun make-description ()
-  (let* ((desc (prompt-read "Description or #0-#9 for previous descriptions"))
-	(num (handler-case (parse-integer desc)
-	       (error () nil))))
-    (cond ((and num (max (min num 9) 0)) (revert-description num))
-	  (num (make-description))
-	  (t (push desc <description>)))
-    (delete-duplicates <description> :from-end t)))
-
-(defun make-name (input-char)
-  (let* ((name (prompt-read "Name"))
-	 (name-object (make-instance 'word :word name :the-char input-char)))
-    (setf (gethash input-char *inputmap*) name-object)
-    (toggle-name name-object)))
+(defun compile-name (path)
+  (let ((root nil))
+    (when <names> (setf root (format nil *names-format* <names>)))
+    (when *description-in-progress*
+      (setf root
+            (string-trim " " (format nil "~A ~A" root
+                                     *description-in-progress*))))
+    (when-let (the-desc (car <description>))
+      (setf root
+            (string-trim " " (format nil "~A ~A" root
+                                     the-desc))))
+    (unless root
+      (setf root " "))
+    (let ((no-num-name (string-trim " " (format nil "~A ~A.jpg" root <date>))))
+      (if (not (cl-fad:file-exists-p (format nil "~A/~A" path no-num-name)))
+          no-num-name
+          (do* ((num 2 (1+ num))
+                (num-name (string-trim " " (format nil "~A ~A ~A.jpg" root num <date>))))
+               ((not (cl-fad:file-exists-p num-name)) num-name))))))
 
 (defmacro defrenamestate (fsm-type state &body body)
   `(fsm:defstate ,fsm-type ,state (fsm c)
@@ -105,7 +101,6 @@ fname2 will be located in the same directory as file1"
 (defun set-initial-state (the-fsm)
   (setf *prompt* "Enter Character for Name: "
         <names> nil
-	*name-in-work* ""
         (the-key the-fsm) nil)
   :initial)
 
@@ -137,16 +132,52 @@ fname2 will be located in the same directory as file1"
             (setf *prompt* (format nil "Name (~A): " c))
             :naming))))
 
+(defparameter overwrite-map-file t
+  "if t, overwrite the .picrename in $HOME with
+the contents of the input map")
+(defun save-input-map (the-map)
+  (let ((home (sb-posix:getenv "HOME")))
+    (with-open-file (rc (utilities:mkstr home "/.picrename")
+                        :direction :output
+                        :if-exists :supersede)
+      (print (let ((all-entries '()))
+               (maphash #'(lambda (key value)
+                            (push (list key value) all-entries))
+                        *inputmap*)
+               all-entries)
+             rc))))
+
+(defun read-input-map ()
+  (let ((home (sb-posix:getenv "HOME"))
+        (inputmap (make-hash-table :test #'eq)))
+    (handler-case (with-open-file (rc (utilities:mkstr home "/.picrename")
+                                      :direction :input
+                                      :if-does-not-exist :error)
+                    (mapc #'(lambda (set)
+                              (setf (gethash (car set) inputmap)
+                                    (cadr set)))
+                          (read rc))
+                    inputmap)
+      (file-error () inputmap))))
+
 (defrenamestate input-fsm :named
   (#\Escape (set-initial-state fsm))
   (#\Return ; Finish the name of the file
-   (rename (pop *list-of-files*) (compile-name))
+   (let ((the-file (pop *list-of-files*)))
+     (format out "rename ~A~%" the-file)
+     (rename the-file (compile-name (get-path-of the-file))))
    (cond
      (*list-of-files*
       (format out "~%Current list of files: ~%~{  ~A~%~}" *list-of-files*)
       (load-from-list *the-window*)
       (set-initial-state fsm))
-     (t (glut:destroy-current-window)
+     (t
+      ;; Save the inputmap to $HOME/.picrename
+      (when overwrite-map-file (save-input-map *inputmap*))
+
+      ;; and then kill us
+      (setf *running* nil)
+      (glut:destroy-current-window)
         :initial)))
   (#\' (update-prompt "Select an entry to modify: ")
        (setf (back fsm) :named)
@@ -280,8 +311,13 @@ Print with glut to an x, y with a glut:font"
   (when (texture-id win)          ; bind the texture if we have it
     (gl:bind-texture :texture-2d (texture-id win)))
   
-  (utilities:condlet (((fullscreen-p win) (height (glut:get :screen-height)) (width (glut:get :screen-width)))
-	    (t (height (glut:height win)) (width (glut:width win))))
+  (utilities:condlet
+      (((fullscreen-p win)
+        (height (glut:get :screen-height))
+        (width (glut:get :screen-width)))
+       (t
+        (height (glut:height win))
+        (width (glut:width win))))
     (gl:with-primitives :quads
       ;; front face
       (gl:tex-coord 0.0 1.0) (gl:vertex 0.0 height 0.0)
@@ -298,7 +334,7 @@ Print with glut to an x, y with a glut:font"
   (bordeaux-threads:release-lock prompt-lock)
   (if (not (eq (fsm:state *the-fsm*) :initial))
       (glut-print 10 50 glut:+bitmap-9-by-15+
-		  (compile-name) 90 90 90 1))
+		  (compile-name (get-path-of (car *list-of-files*))) 90 90 90 1))
   ;; swap the buffer onto the screen  
   (glut:swap-buffers))
 
