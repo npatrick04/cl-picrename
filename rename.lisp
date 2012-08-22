@@ -2,9 +2,9 @@
 
 ;;(in-package :cl-picrename)
 
-(ql:quickload "cl-opengl")   ; load OpenGL bindings
-(ql:quickload "cl-glu")      ; load GLU bindings
-(ql:quickload "cl-glut")     ; load GLUT bindings
+(asdf:load-system "cl-opengl")   ; load OpenGL bindings
+(asdf:load-system "cl-glu")      ; load GLU bindings
+(asdf:load-system "cl-glut")     ; load GLUT bindings
 (ql:quickload "cl-devil")
 (ql:quickload "bordeaux-threads")
 (ql:quickload "closer-mop")
