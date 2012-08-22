@@ -28,6 +28,7 @@
 (defvar *the-state* "")
 (defparameter *prompt* "prompt>")
 (defparameter out *standard-output*)
+(defvar *running* t)
 
 (defvar prompt-lock (bordeaux-threads:make-lock))
 
@@ -227,7 +228,7 @@ fname2 will be located in the same directory as file1"
                      :tick-interval (round 1000 60)))  ; milliseconds per tick
 
 (defmethod glut:tick ((win my-window))
-  (glut:post-redisplay))        ; tell GLUT to redraw
+  (when *running* (glut:post-redisplay)))        ; tell GLUT to redraw
 
 (defmethod glut:display-window :before ((win my-window))
   (gl:shade-model :smooth)        ; enables smooth shading
