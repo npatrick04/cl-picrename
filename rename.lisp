@@ -15,29 +15,22 @@
 (asdf:load-system :cl-fad)
 (ql:quickload "lisp-magick")
 
-(defvar *config-file* ".renamerrc")
+(defvar *config-file* ".picrename")
 (defvar *list-of-files* '())
 (defvar *inputmap* (make-hash-table :test #'eq))
-(defvar *name-pattern* "<names> <description> <#> <date>")
 (defvar *name-in-progress* "")
 (defvar <names> nil)
 (defvar <description> (list))
 (defvar *description-in-progress* "")
 (defvar <date> nil)
-(defvar *current-word* "")
-(defvar *the-state* "")
 (defparameter *prompt* "prompt>")
 (defparameter out *standard-output*)
 (defvar *running* t)
+(defparameter overwrite-map-file t
+  "if t, overwrite the *config-file* in $HOME with
+the contents of the input map")
 
 (defvar prompt-lock (bordeaux-threads:make-lock))
-
-(defclass word ()
-  ((the-char :accessor the-char :initarg :the-char :initform (error "the-char needs to be provided"))
-   (word :accessor word :initarg :word :initform (error "Word needs to be provided"))))
-
-(defclass description (word)
-  ())
 
 (defun get-path-of (file)
   (if file
@@ -65,12 +58,7 @@ fname2 will be located in the same directory as file1"
 (defun get-list-of-files ()
   (mapcar #'sb-ext:native-namestring (cl-fad:list-directory "/home/nick/lisp/cl-picrename/examples")))
 
-(defun words-equalp (c1 c2)
-  (eq (the-char c1) (the-char c2)))
-
 (defvar *names-format* "~{~a~#[~; and ~:; ~]~}")
-(defvar *title-format-desc* "~A ~a num ~A")
-(defvar *title-format-no-desc* "~A num ~A")
 (defun compile-name (path)
   (let ((root nil))
     (when <names> (setf root (format nil *names-format* <names>)))
@@ -91,13 +79,6 @@ fname2 will be located in the same directory as file1"
                 (num-name (string-trim " " (format nil "~A ~A ~A.jpg" root num <date>))))
                ((not (cl-fad:file-exists-p num-name)) num-name))))))
 
-(defmacro defrenamestate (fsm-type state &body body)
-  `(fsm:defstate ,fsm-type ,state (fsm c)
-     (case c
-       ,@body)))
-(defmacro mac (expr)
-  `(pprint (macroexpand-1 ',expr)))
-
 (defun set-initial-state (the-fsm)
   (setf *prompt* "Enter Character for Name: "
         <names> nil
@@ -114,6 +95,36 @@ fname2 will be located in the same directory as file1"
   (setf *prompt* new-prompt)
   (bordeaux-threads:release-lock prompt-lock))
     
+(defun save-input-map (the-map)
+  (let ((home (sb-posix:getenv "HOME")))
+    (with-open-file (rc (utilities:mkstr home "/" *config-file*)
+                        :direction :output
+                        :if-exists :supersede)
+      (print (let ((all-entries '()))
+               (maphash #'(lambda (key value)
+                            (push (list key value) all-entries))
+                        *inputmap*)
+               all-entries)
+             rc))))
+
+(defun read-input-map ()
+  (let ((home (sb-posix:getenv "HOME"))
+        (inputmap (make-hash-table :test #'eq)))
+    (handler-case (with-open-file (rc (utilities:mkstr home "/" *config-file*)
+                                      :direction :input
+                                      :if-does-not-exist :error)
+                    (mapc #'(lambda (set)
+                              (setf (gethash (car set) inputmap)
+                                    (cadr set)))
+                          (read rc))
+                    inputmap)
+      (file-error () inputmap))))
+
+(defmacro defrenamestate (fsm-type state &body body)
+  `(fsm:defstate ,fsm-type ,state (fsm c)
+     (case c
+       ,@body)))
+
 (fsm:deffsm input-fsm ()
   ((the-key :accessor the-key)
    (back :accessor back)))
@@ -132,34 +143,6 @@ fname2 will be located in the same directory as file1"
             (setf *prompt* (format nil "Name (~A): " c))
             :naming))))
 
-(defparameter overwrite-map-file t
-  "if t, overwrite the .picrename in $HOME with
-the contents of the input map")
-(defun save-input-map (the-map)
-  (let ((home (sb-posix:getenv "HOME")))
-    (with-open-file (rc (utilities:mkstr home "/.picrename")
-                        :direction :output
-                        :if-exists :supersede)
-      (print (let ((all-entries '()))
-               (maphash #'(lambda (key value)
-                            (push (list key value) all-entries))
-                        *inputmap*)
-               all-entries)
-             rc))))
-
-(defun read-input-map ()
-  (let ((home (sb-posix:getenv "HOME"))
-        (inputmap (make-hash-table :test #'eq)))
-    (handler-case (with-open-file (rc (utilities:mkstr home "/.picrename")
-                                      :direction :input
-                                      :if-does-not-exist :error)
-                    (mapc #'(lambda (set)
-                              (setf (gethash (car set) inputmap)
-                                    (cadr set)))
-                          (read rc))
-                    inputmap)
-      (file-error () inputmap))))
-
 (defrenamestate input-fsm :named
   (#\Escape (set-initial-state fsm))
   (#\Return ; Finish the name of the file
@@ -172,7 +155,7 @@ the contents of the input map")
       (load-from-list *the-window*)
       (set-initial-state fsm))
      (t
-      ;; Save the inputmap to $HOME/.picrename
+      ;; Save the inputmap to $HOME/*config-file*
       (when overwrite-map-file (save-input-map *inputmap*))
 
       ;; and then kill us
@@ -240,13 +223,11 @@ the contents of the input map")
      :describe))
 
 (defparameter *the-fsm* (make-instance 'input-fsm))
-(setf *the-state* "INITIAL")
-
-;; (format t "Commands~%l - Load new files~%; - Make a new description~%<NewLine> - Execute renaming of file")
-;; (format t "To add names, initially type the letter which will provide the hotkey for the person you want to add.~%When prompted, type the name and hit enter.  Subsequent use of that letter hotkey will result in the toggling of that person's name.~%")
-
-(defparameter out *standard-output*)
 (defparameter *the-window* nil)
+
+;;; 
+;;; OPENGL Stuff
+;;;
 
 (defclass my-window (glut:window)
   ((fullscreen :initarg :fullscreen :reader fullscreen-p)
@@ -394,6 +375,10 @@ Print with glut to an x, y with a glut:font"
 	  (otherwise
 	   (funcall *the-fsm* key))))))
 
+;;; 
+;;;  Entry points
+;;;
+
 (defun run-it ()
   (setf *name-in-progress* ""
 	*prompt* "Enter Character for Name: "
@@ -401,10 +386,12 @@ Print with glut to an x, y with a glut:font"
   (set-initial-state *the-fsm*)
   (glut:display-window *the-window*))
 
+;;; (defparameter the-thread (bordeaux-threads:make-thread #'run-it))
+
 (defun main ()
   (glut:init (lisp-implementation-type))
   (setf *list-of-files*
-        (mapcar #'(lambda (fn) (concatenate 'string (sb-posix:getcwd) "/" fn))
+        (mapcar #'(lambda (filename) (utilities:mkstr (sb-posix:getcwd) "/" filename))
                   (cdr sb-ext:*posix-argv*))
         *name-in-progress* ""
 	*prompt* "Enter Character for Name: "
@@ -415,6 +402,6 @@ Print with glut to an x, y with a glut:font"
 
 ;; Compile this file
 (unless (member :swank *features*)
-  (sb-ext:save-lisp-and-die "/home/nick/lisp/cl-picrename/picrename"
+  (sb-ext:save-lisp-and-die (utilities:mkstr (sb-posix:getcwd) "/picrename")
                             :toplevel #'main
                             :executable t))
