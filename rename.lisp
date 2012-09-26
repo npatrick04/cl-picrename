@@ -7,7 +7,6 @@
 (asdf:load-system "cl-glut")     ; load GLUT bindings
 (ql:quickload "cl-devil")
 (ql:quickload "bordeaux-threads")
-(ql:quickload "closer-mop")
 (ql:quickload "alexandria")
 (use-package :alexandria)
 (asdf:load-system "utilities")
@@ -161,11 +160,6 @@ fname2 will be located in the same directory as file1"
 
 (defun make-keymap ()
   (let ((map (make-sparse-keymap)))
-    ;; (mapc #'(lambda (c)
-    ;;           (add-command map c #'(lambda ()
-    ;;                                  (insert-content-at-point
-    ;;                                   c *current-buffer*))))
-    ;;       (coerce "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ. -_1234567890" 'list))
     (add-command map #\Backspace #'(lambda ()
                                      (delete-backwards *current-buffer*)))
     (add-command map :default 'self-insert-character)
@@ -507,24 +501,6 @@ fname2 will be located in the same directory as file1"
 
   (when (texture-id win)       ; enable texturing if we have one
     (gl:enable :texture-2d)))
-
-;; (defun glut-print (position text-list)
-;;   "http://www.gamedeception.net/threads/1876-Printing-Text-with-glut
-;; Print with glut to an x, y with a glut:font"
-;;   (let ((blending (gl:enabledp :blend))
-;;         (x (car position))
-;;         (y (cadr position)))
-;;     (gl:enable :blend)
-;;     (gl:raster-pos x y)
-;;     (dolist (chunk text-list)
-;;       (apply #'gl:color (color chunk))
-;;       (map nil
-;;            #'(lambda (c)
-;;                (glut:bitmap-character (font chunk)
-;;                                       (char-int c)))
-;;            (content chunk)))
-;;     (unless blending
-;;       (gl:disable :blend))))
 
 (defparameter *space-between-lines* 15)
 (defun glut-print (pos font text r g b a)
