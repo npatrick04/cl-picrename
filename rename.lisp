@@ -1,17 +1,10 @@
 ;;;; Picture renamer
 
-(in-package :cl-picrename)
+(in-package :picrename)
 
-;; (ql:quickload "cl-devil")
-;; (ql:quickload "bordeaux-threads")
-;; (ql:quickload "alexandria")
-(use-package :alexandria)
-;; (asdf:load-system "utilities")
-;; (use-package :utilities)
-;; (asdf:load-system :cl-fad)
-;; (ql:quickload "lisp-magick")
-
-(defvar *config-file* ".picrename")
+(defvar *config-file*
+  (sb-ext:native-pathname
+   (utilities:mkstr (sb-posix:getenv "HOME") "/.picrename")))
 (defvar *list-of-files* '())
 (defvar *inputmap* (make-hash-table :test #'eq))
 (defvar *name-in-progress* "")
@@ -127,7 +120,13 @@ fname2 will be located in the same directory as file1"
                     inputmap)
       (file-error () inputmap))))
 
-(defun kill-picrename () (glut:destroy-current-window))
+(defun kill-picrename ()
+  (clean-socket)
+  (glut:destroy-current-window)
+  ;; (when *lock*
+  ;;   (close *lock*)
+  ;;   (delete-file "picrename.lock"))
+  )
 
 (defun update-prompt (new-prompt)
   (bordeaux-threads:acquire-lock prompt-lock)
@@ -319,17 +318,51 @@ fname2 will be located in the same directory as file1"
 
 ;;; (defparameter the-thread (bordeaux-threads:make-thread #'run-it))
 
+(defparameter *executable-scanner*
+  (cl-ppcre:create-scanner "^picrename.exe" :multi-line-mode t))
+
+(defun check-for-other-instances ()
+  "Return true if an instance of the application is already running"
+  (> (length (cl-ppcre:all-matches "picrename.exe" 
+                                   (let ((tl (sb-ext:run-program "check-app.bat" nil :input t :output :stream :search t))
+                                         (task-list '()))
+                                     (do ((c (read-char (sb-ext:process-output tl))
+                                             (read-char (sb-ext:process-output tl) nil 'the-end)))
+                                         ((not (characterp c)) (coerce (nreverse task-list) 'string))
+                                       (push c task-list)))))
+     ;; The match always returns a match for the batch file echo, so check for more than 1 match
+     2))
+
+
 (defun main ()
-  (glut:init (lisp-implementation-type))
-  (setf *list-of-files*
-        (mapcar #'(lambda (filename) (utilities:mkstr (sb-posix:getcwd) "/" filename))
-                  (cdr sb-ext:*posix-argv*))
-        *name-in-progress* ""
-	*the-window* (make-instance 'my-window)
-        *inputmap* (read-input-map))
-  (initialize-buffers)
-  (set-initial-state)
-  (glut:display-window *the-window*))
+  (handler-case (progn (create-receive-socket)
+                       ;; (let ((*lock* (open "picrename.lock"
+                       ;;                     :direction :output
+                       ;;                     :if-exists :error)))
+                       (glut:init (lisp-implementation-type))
+                       (setf *list-of-files* 
+                             (mapcar #'(lambda (filename) (sb-ext:native-namestring filename))
+                                     (cdr sb-ext:*posix-argv*))
+                             *name-in-progress* ""
+                             *running* t
+                             *the-window* (make-instance 'my-window)
+                             *inputmap* (read-input-map))
+
+                       ;; Update keymaps
+                       (def-modify-keymap)
+                       (def-initial-keymap)
+                       (def-named-keymap)
+                       (def-naming-keymap)
+                       (def-description-keymap)
+                       
+                       (initialize-buffers)
+                       (set-initial-state)
+                       (glut:display-window *the-window*))
+    (sb-bsd-sockets:address-in-use-error ()
+      (sleep 3)
+      (mapc #'(lambda (filename)
+                (udp-send-file (sb-ext:native-namestring filename)))
+            (cdr sb-ext:*posix-argv*)))))
 
 ;; Compile this file
 (unless (member :swank *features*)

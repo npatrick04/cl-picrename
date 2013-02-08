@@ -1,14 +1,19 @@
 ;;;; cl-picrename.asd
-;; (asdf:load-system "cl-opengl")   ; load OpenGL bindings
-;; (asdf:load-system "cl-glu")      ; load GLU bindings
-;; (asdf:load-system "cl-glut")     ; load GLUT bindings
 
 (asdf:defsystem #:cl-picrename
-  :serial t
+  :name "picrename"
+  :author "Nicholas Patrick <npatrick04@gmail.com>"
+  :version "0.1"
+  :maintainer "Nicholas Patrick <npatrick04@gmail.com>"
+  :license "BSD"
+  :description "JPEG picture renaming tool"
+  :long-description ""
   :depends-on (cl-opengl cl-glu cl-glut cl-devil bordeaux-threads
-                         alexandria utilities lisp-magick cl-fad)
+                         alexandria utilities cl-fad jpegmeta babel
+                         usocket cl-ppcre memoize)
   :components ((:file "package")
-               (:file "buffers")
-               (:file "display")
-               (:file "rename")))
+               (:file "socket-transfer" :depends-on ("package"))
+               (:file "buffers" :depends-on ("package"))
+               (:file "display" :depends-on ("package" "buffers" "socket-transfer"))
+               (:file "rename" :depends-on ("package" "buffers" "display" "socket-transfer"))))
 

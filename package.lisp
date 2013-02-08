@@ -1,6 +1,7 @@
 ;;;; package.lisp
 
-(defpackage #:cl-picrename
-  (:use #:cl)
+(defpackage #:picrename
+  (:use #:cl
+        #:alexandria)
   (:export main run-it))
 

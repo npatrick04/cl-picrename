@@ -1,17 +1,24 @@
-(in-package :cl-picrename)
+(in-package :picrename)
+
+(defparameter splash-image "/home/nick/2012-04-07-09.19.53.jpg")
+
+(org.tfeb.hax.memoize:def-memoized-function get-jpeg-date-time (filename)
+  (handler-bind ((jpegmeta::segment-marker-off #'jpegmeta::nil-after-invalid-segment))
+    (jpegmeta:get-tiff-field
+     (jpegmeta:read-jpeg-from-file filename)
+     'jpegmeta::date-time)))
 
 (defun load-from-list (win)
   "Load an image into openGL"
-  (setf (texture-id win)
-	(il:with-init
-	  (ilut:renderer :opengl)
-	  (ilut:gl-load-image (car *list-of-files*)))
-        <date> (let ((wand (lisp-magick:new-magick-wand)))
-                 (lisp-magick:magick-read-image wand (car *list-of-files*))
-                 (let* ((date-time (lisp-magick:magick-get-image-property wand "date:modify"))
-                        (date (subseq date-time 0 (position #\T date-time))))
-                   (lisp-magick:clear-magick-wand wand)
-                   date))))
+  (let ((filename (car *list-of-files*)))
+    (when (cl-fad:file-exists-p filename)
+      (setf (texture-id win)
+            (il:with-init
+                (ilut:renderer :opengl)
+              (ilut:gl-load-image filename))
+            <date> (let ((date-time (get-jpeg-date-time filename)))
+                     (substitute #\- #\:
+                                 (subseq date-time 0 (position #\Space date-time))))))))
                          
 ;;; 
 ;;; OPENGL Stuff
@@ -25,10 +32,12 @@
                      :x 100 :y 100
                      :mode '(:double :rgb :depth)
                      :fullscreen nil
-                     :tick-interval (round 1000 60)))  ; milliseconds per tick
+                     :tick-interval (round 1000 10)))  ; milliseconds per tick
 
 (defmethod glut:tick ((win my-window))
-  (when *running* (glut:post-redisplay)))        ; tell GLUT to redraw
+  (when *running*
+    (get-more-files)
+    (glut:post-redisplay)))             ; tell GLUT to redraw
 
 (defmethod glut:display-window :before ((win my-window))
   (gl:shade-model :smooth)        ; enables smooth shading
@@ -118,8 +127,8 @@ Print with glut to an x, y with a glut:font"
   ;; set perspective based on window aspect ratio
   (glu:ortho-2d 0 width 0 height)
 
-  (format out "Win: Height: ~A, Width: ~A~%" (glut:height win) (glut:width win))
-  (format out "New: Height: ~A, Width: ~A~%" height width)
+  ;; (format out "Win: Height: ~A, Width: ~A~%" (glut:height win) (glut:width win))
+  ;; (format out "New: Height: ~A, Width: ~A~%" height width)
 
   (setf (glut:height win) height
   	(glut:width win) width)
