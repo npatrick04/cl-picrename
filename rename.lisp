@@ -23,32 +23,51 @@ the contents of the input map")
 (defparameter *naming-key* nil)
 (defvar prompt-lock (bordeaux-threads:make-lock))
 (defparameter *the-window* nil)
+(defparameter *lock* nil)
+
+(defparameter *initial-keymap* nil)
+(defparameter *named-keymap* nil)
+(defparameter *naming-keymap* nil)
+(defparameter *modify-keymap* nil)
+(defparameter *description-keymap* nil)
 
 (defun get-path-of (file)
   (if file
       (subseq file 0 (1+ (position #\/ file :from-end t)))
       "."))
 
-(defun rename (file1 fname2)
+(defmacro dbg (form)
+  (let ((val (gensym)))
+    `(let ((,val ,form))
+       (format out "~A=~A~%" ',form ,val)
+       ,val)))
+
+(defun rename (file1 f2)
   "Rename file1 which includes the path, to the filename of fname2.
 fname2 will be located in the same directory as file1"
-  (let* ((last/ (1+ (position #\/ file1 :from-end t)))
-         (path (subseq file1 0 last/))
-         (file2 (concatenate 'string path fname2)))
-    (if (cl-fad:file-exists-p file1)
-        (if (cl-fad:file-exists-p file2)
+  ;; (let* ((last/ (1+ (position #\/ file1 :from-end t)))
+  ;;        (path (subseq file1 0 last/))
+  ;;        (file2 (concatenate 'string path fname2)))
+  (let ((f1 (pathname file1)))
+    (if (cl-fad:file-exists-p f1)
+        (if (cl-fad:file-exists-p f2)
             (error 'new-file-already-exists)
-            (progn (format out "file 1 exists and 2 doesn't~%Renaming ~a to ~a~%" file1 file2)
-                   (rename-file file1 file2)))
+            (progn (format out "file 1 exists and 2 doesn't~%Renaming ~a to ~a~%" file1 (pathname-name f2))
+                   (rename-file f1 (pathname-name f2))))
         (error 'original-file-doesnt-exist))))
 
 (defun change-mode (mode)
-  (setf (keymap *current-buffer*) (symbol-value (cdr (assoc mode *all-modes*))))
-  (setf (text *fsm-state*) (string mode)))
+  (format out "Changing mode to ~A~%" mode)
+  (setf (keymap *current-buffer*) (symbol-value (cdr (assoc mode *all-modes*)))
+        (text *fsm-state*) (string mode)))
 
 (defun display-output-name ()
   (clear *output-name*)
-  (insert-content-at-point (compile-name ".") *output-name*))
+  (let ((pathspec (compile-name (pathname (car *list-of-files*))
+                                 ;; *default-pathname-defaults*
+                                 )))
+    (insert-content-at-point (pathname-name pathspec)
+                             *output-name*)))
 
 (defun toggle-name (name)
   (if (member name <names> :test #'equal)
@@ -59,34 +78,42 @@ fname2 will be located in the same directory as file1"
 (defun maybe-toggle-name (name)
   (toggle-name name)
   (if (or <names>
-          <description>)
+          (car <description>))
       (progn (display-output-name)
              (change-mode 'named))
       (set-initial-state)))
 
 (defun get-list-of-files ()
-  (mapcar #'sb-ext:native-namestring (cl-fad:list-directory "/home/nick/lisp/cl-picrename/examples")))
+  (mapcar #'sb-ext:native-namestring (cl-fad:list-directory
+                                      #+LINUX "/home/nick/lisp/cl-picrename/examples"
+                                      #+WIN32 "C:\\Users\\Nick\\Dropbox\\lisp-code\\cl-picrename\\examples\\"
+                                      )))
 
 (defvar *names-format* "~{~a~#[~; and ~:; ~]~}")
-(defun compile-name (path)
+(defun compile-name (pathspec)
   (let ((root nil))
     (when <names> (setf root (format nil *names-format* (reverse <names>))))
     (when *description-in-progress*
       (setf root
-            (string-trim " " (format nil "~A ~A" root
+            (string-trim " " (format nil "~@[~A ~]~A" root
                                      *description-in-progress*))))
     (when-let (the-desc (car <description>))
       (setf root
-            (string-trim " " (format nil "~A ~A" root
+            (string-trim " " (format nil "~@[~A ~]~A" root
                                      the-desc))))
     (unless root
       (setf root " "))
-    (let ((no-num-name (string-trim " " (format nil "~A ~A.jpg" root <date>))))
-      (if (not (cl-fad:file-exists-p (format nil "~A/~A" path no-num-name)))
-          no-num-name
-          (do* ((num 2 (1+ num))
-                (num-name (string-trim " " (format nil "~A ~A ~A.jpg" root num <date>))))
-               ((not (cl-fad:file-exists-p num-name)) num-name))))))
+    (let ((new-file (make-pathname :name (string-trim " " (format nil "~@[~A ~]~A" root <date>))
+                                   :defaults pathspec)))
+      (if (not (cl-fad:file-exists-p new-file))
+          new-file
+          (let (num-file)
+            (do ((num 2 (1+ num)))
+                ((and num-file
+                      (not (cl-fad:file-exists-p num-file))) num-file)
+              (setf num-file (make-pathname :name (string-trim " " (format nil "~@[~A ~]~@[~A ~]~A" root num <date>))
+                                            :defaults pathspec))
+              (format out "compile-name: num=~A,  num-file=~A~%" num num-file)))))))
 
 (defun set-initial-state ()
   (clear *output-name*)
@@ -96,21 +123,19 @@ fname2 will be located in the same directory as file1"
   (change-mode 'initial))
 
 (defun save-input-map (the-map)
-  (let ((home (sb-posix:getenv "HOME")))
-    (with-open-file (rc (utilities:mkstr home "/" *config-file*)
-                        :direction :output
-                        :if-exists :supersede)
-      (print (let ((all-entries '()))
-               (maphash #'(lambda (key value)
-                            (push (list key value) all-entries))
-                        the-map)
-               all-entries)
-             rc))))
+  (with-open-file (rc *config-file*
+                      :direction :output
+                      :if-exists :supersede)
+    (print (let ((all-entries '()))
+             (maphash #'(lambda (key value)
+                          (push (list key value) all-entries))
+                      the-map)
+             all-entries)
+           rc)))
 
 (defun read-input-map ()
-  (let ((home (sb-posix:getenv "HOME"))
-        (inputmap (make-hash-table :test #'eq)))
-    (handler-case (with-open-file (rc (utilities:mkstr home "/" *config-file*)
+  (let ((inputmap (make-hash-table :test #'eq)))
+    (handler-case (with-open-file (rc *config-file*
                                       :direction :input
                                       :if-does-not-exist :error)
                     (mapc #'(lambda (set)
@@ -137,14 +162,15 @@ fname2 will be located in the same directory as file1"
 ;;; TODO Picture buffer...or content...or something
 
 (defun initialize-buffers ()
-  (setf *default-font* glut:+bitmap-9-by-15+)
+  ;; (setf *default-font* glut:+bitmap-9-by-15+)
+  (setf *default-font* glut:+stroke-roman+)
 
   (add-buffer *prompt*
               prompt-buffer
-              :pos '(10 10)
+              :pos '(10 100)
               :prompt "prompt>")
-  (add-buffer *fsm-state* buffer :pos '(10 30) :read-only t)
-  (add-buffer *output-name* buffer :pos '(10 50))
+  (add-buffer *fsm-state* buffer :pos '(10 300) :read-only t)
+  (add-buffer *output-name* buffer :pos '(10 500))
   (add-buffer *revise-assignments* buffer
               :pos '(400 400)
               :visible nil)
@@ -177,13 +203,14 @@ fname2 will be located in the same directory as file1"
   (insert-content-at-point name *prompt*)
   (change-mode 'naming))
 
-(let ((map (make-sparse-keymap)))
-  (add-command map #\Escape 'back-to-named-or-initial)
-  (maphash #'(lambda (key val)
-               (add-command map key #'(lambda ()
-                                        (revise-name key val))))
-           *inputmap*)
-  (defparameter *modify-keymap* map))
+(defun def-modify-keymap ()
+  (let ((map (make-sparse-keymap)))
+    (maphash #'(lambda (key val)
+                 (add-command map key #'(lambda ()
+                                          (revise-name key val))))
+             *inputmap*)
+    (add-command map #\Escape 'back-to-named-or-initial)
+    (defparameter *modify-keymap* map)))
 
 (defun modify-entry ()
   (setf (pos *revise-assignments*) (list (- (glut:height *the-window*)
@@ -201,15 +228,17 @@ fname2 will be located in the same directory as file1"
 ;;;  Initial Mode
 ;;;
 
-(let ((map (make-sparse-keymap)))
-  (add-command map #\Escape 'kill-picrename)
-  (add-command map #\' 'modify-entry)
-  (maphash #'(lambda (key val)
-               (add-command map key #'(lambda ()
-                                        (maybe-toggle-name val))))
-           *inputmap*)
-  (add-command map :default 'start-naming)
-  (defparameter *initial-keymap* map))
+(defun def-initial-keymap ()
+  (let ((map (make-sparse-keymap)))
+    (maphash #'(lambda (key val)
+                 (add-command map key #'(lambda ()
+                                          (maybe-toggle-name val))))
+             *inputmap*)
+    (add-command map #\Escape 'kill-picrename)
+    (add-command map #\' 'modify-entry)
+    (add-command map #\; 'update-description)
+    (add-command map :default 'start-naming)
+    (defparameter *initial-keymap* map)))
 
 ;;;
 ;;;  Named Mode
@@ -219,7 +248,8 @@ fname2 will be located in the same directory as file1"
   (clear *output-name*)
   (let ((the-file (pop *list-of-files*)))
     (format out "rename ~A~%" the-file)
-    (rename the-file (compile-name (get-path-of the-file))))
+    ;; convert the file to a lisp pathtype
+    (rename the-file (compile-name (pathname the-file))))
   (cond
     (*list-of-files*
      (format out "~%Current list of files: ~%~{  ~A~%~}" *list-of-files*)
@@ -237,17 +267,18 @@ fname2 will be located in the same directory as file1"
   (update-prompt "Enter Description: ")
   (change-mode 'description))
 
-(let ((map (make-sparse-keymap)))
-  (add-command map #\Escape 'set-initial-state)
-  (add-command map #\Return 'name-the-picture)
-  (add-command map #\' 'modify-entry)
-  (add-command map #\; 'update-description)
-  (maphash #'(lambda (key val)
-               (add-command map key (lambda ()
-                                      (maybe-toggle-name val))))
-           *inputmap*)
-  (add-command map :default 'start-naming)
-  (defparameter *named-keymap* map))
+(defun def-named-keymap ()
+  (let ((map (make-sparse-keymap)))
+    (maphash #'(lambda (key val)
+                 (add-command map key (lambda ()
+                                        (maybe-toggle-name val))))
+             *inputmap*)
+    (add-command map #\Escape 'set-initial-state)
+    (add-command map #\Return 'name-the-picture)
+    (add-command map #\' 'modify-entry)
+    (add-command map #\; 'update-description)
+    (add-command map :default 'start-naming)
+    (defparameter *named-keymap* map)))
 
 ;;;
 ;;;  Naming Mode
@@ -268,17 +299,18 @@ fname2 will be located in the same directory as file1"
   (display-output-name)
   (change-mode 'named))
 
-(let ((map (make-keymap)))
-  (add-command map #\Escape 'back-to-named-or-initial)
-  (add-command map #\Return 'finish-naming)
-  (defparameter *naming-keymap* map))
+(defun def-naming-keymap ()
+  (let ((map (make-keymap)))
+    (add-command map #\Escape 'back-to-named-or-initial)
+    (add-command map #\Return 'finish-naming)
+    (defparameter *naming-keymap* map)))
 
 ;;;
 ;;;  Describing Mode
 ;;; 
 
 (defun exit-describing ()
-  (setf <description> nil)
+  (push nil <description>)
   (update-prompt "Enter Character for Name: ")
   (if <names>
       (change-mode 'named)
@@ -288,14 +320,15 @@ fname2 will be located in the same directory as file1"
   (push (text *prompt*) <description>)
   (update-prompt "Enter Character for Name: ")
   (display-output-name)
-  (if <names>
+  (if (or (car <description>) <names>)
       (change-mode 'named)
       (set-initial-state)))
 
-(let ((map (make-keymap)))
-  (add-command map #\Escape 'exit-describing)
-  (add-command map #\Return 'finish-description)
-  (defparameter *description-keymap* map))
+(defun def-description-keymap ()
+  (let ((map (make-keymap)))
+    (add-command map #\Escape 'exit-describing)
+    (add-command map #\Return 'finish-description)
+    (defparameter *description-keymap* map)))
 
 (add-mode description *description-keymap*)
 (add-mode named *named-keymap*)
@@ -308,10 +341,22 @@ fname2 will be located in the same directory as file1"
 ;;;
 
 (defun run-it ()
-  (setf *name-in-progress* ""
+  (glut:init (lisp-implementation-type))
+  (setf *list-of-files* 
+        (mapcar #'(lambda (filename) (sb-ext:native-namestring filename))
+                (cdr sb-ext:*posix-argv*))
+        *name-in-progress* ""
 	*the-window* (make-instance 'my-window)
         *running* t
         *inputmap* (read-input-map))
+
+  ;; Update keymaps
+  (def-modify-keymap)
+  (def-initial-keymap)
+  (def-named-keymap)
+  (def-naming-keymap)
+  (def-description-keymap)
+
   (initialize-buffers)
   (set-initial-state)
   (glut:display-window *the-window*))
@@ -366,6 +411,7 @@ fname2 will be located in the same directory as file1"
 
 ;; Compile this file
 (unless (member :swank *features*)
-  (sb-ext:save-lisp-and-die (utilities:mkstr (sb-posix:getcwd) "/picrename")
+  (format t "Generating executable!~%")
+  (sb-ext:save-lisp-and-die (sb-ext:native-namestring (utilities:mkstr (sb-posix:getcwd) "/picrename.exe"))
                             :toplevel #'main
                             :executable t))
