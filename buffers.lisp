@@ -1,4 +1,4 @@
-(in-package :cl-picrename)
+(in-package :picrename)
 
 ;;;
 ;;;  Keymap
@@ -43,7 +43,7 @@
    (text :initform " " :initarg :text :accessor text)
    (visible :initform t :initarg :visible :accessor visible)
    (font :initform nil :initarg :font :accessor font)
-   (color :initform '(90 90 90 1) :initarg :color :accessor color)
+   (color :initform '(255 255 255 1) :initarg :color :accessor color)
    (mark :initform nil :accessor mark)
    (text-length :accessor text-length)
    (read-only :initform nil :initarg :read-only :reader read-only)))
@@ -57,7 +57,7 @@
 
 (defmacro add-buffer (name type &rest rest)
   `(progn (defparameter ,name (make-instance ',type ,@rest))
-          (alexandria:if-let (the-entry (assoc ',name *focus-list*))
+          (if-let (the-entry (assoc ',name *focus-list*))
             (rplacd the-entry ,name)
             (push (cons ',name ,name) *focus-list*))))
 
@@ -107,7 +107,7 @@
     (glut-print (pos buf)
                 (font buf)
                 (text buf)
-                90 90 90 1)))
+                255 255 255 1)))
 
 ;;;
 ;;;  Prompt buffer
@@ -121,7 +121,7 @@
     (glut-print (pos buf)
                 (font buf)
                 (utilities:mkstr (prompt buf) (text buf))
-                90 90 90 1)))
+                255 255 255 1)))
 
 (defun clear (buffer)
   (setf (pt buffer) 0

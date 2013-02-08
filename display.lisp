@@ -60,30 +60,41 @@
     (setf (texture-id win)
           (il:with-init
 	    (ilut:renderer :opengl)
-	    (ilut:gl-load-image "/home/nick/2012-04-07-09.19.53.jpg"))))
+	    (ilut:gl-load-image splash-image))))
 
   (when (texture-id win)       ; enable texturing if we have one
     (gl:enable :texture-2d)))
 
 (defparameter *space-between-lines* 15)
-(defun glut-print (pos font text r g b a)
+(defun glut-print (pos font text r g b a &optional (font-type 'stroke))
   "http://www.gamedeception.net/threads/1876-Printing-Text-with-glut
 Print with glut to an x, y with a glut:font"
-  (let ((blending (gl:enabledp :blend))
-        (x (car pos))
-        (y (cadr pos)))
-    (gl:enable :blend)
-    (gl:color r g b a)
-    (gl:raster-pos x y)
-    (map nil
-	 #'(lambda (c)
-	     (if (eq c #\Newline)
-                 (gl:raster-pos x (decf y *space-between-lines*))
-                 (glut:bitmap-character font
-                                        (char-int c))))
-	 text)
-    (unless blending
-      (gl:disable :blend))))
+  (gl:with-pushed-matrix
+    (gl:scale 0.1 0.1 0)
+    (glut:stroke-width font 5)
+    (let ((blending (gl:enabledp :blend))
+          (x (car pos))
+          (y (cadr pos)))
+      (flet ((position-character (x y)
+               (if (eq font-type 'bitmap)
+                   (gl:raster-pos x y)
+                   (gl:translate x y 0)))
+             (print-char (font char)
+               (if (eq font-type 'bitmap)
+                   (glut:bitmap-character font char)
+                   (glut:stroke-character font char))))
+        (gl:enable :blend)
+        (gl:color r g b a)
+        (position-character x y)
+        (map nil
+             #'(lambda (c)
+                 (if (eq c #\Newline)
+                     (position-character x (decf y *space-between-lines*))
+                     (print-char font
+                                 (char-int c))))
+             text)
+        (unless blending
+          (gl:disable :blend))))))
 
 (defmethod glut:display ((win my-window))
   ;; clear the color buffer and depth buffer
@@ -140,6 +151,10 @@ Print with glut to an x, y with a glut:font"
 
 (defmethod glut:keyboard ((win my-window) key xx yy)
   (declare (ignore xx yy))
+
+  ;; (princ "In the GLUT keyboard handler")
+  ;; (fresh-line)
+  
   ;; Check for special keys
   (multiple-value-bind (shift ctrl alt) (glut:get-modifier-values)
     (declare (ignore shift ctrl))
@@ -156,7 +171,9 @@ Print with glut to an x, y with a glut:font"
 			    (load-from-list win))))
 	  
 	;; No alt modifier, do normal stuff
-        (progn (if-let (fn (gethash key (keymap *current-buffer*)))
+        (progn ;;(format out "Getting ready to funcall a fn with key ~A.~%" key)
+	  
+	  (if-let (fn (gethash key (keymap *current-buffer*)))
                  (funcall fn)
                  (if-let (fn (gethash :default (keymap *current-buffer*)))
                    (funcall fn key)
